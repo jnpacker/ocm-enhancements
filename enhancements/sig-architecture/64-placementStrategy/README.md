@@ -35,7 +35,7 @@ In large scale or production ready environment applying workloads required progr
 ### Placement API
 
 PlacementStrategy's propose DecisionStrategy field to the Placement API;
-1. DecisionStrategy divide the created placement decisions into groups. The DecisionStrategy's ClustersPercentagePerDecisionGroup field set the max number of clusters exist in a decision group as percentage of the total number of selected clusters. As example; for a total 100 clusters selected, ClustersPercentagePerDecisionGroup equal to 20% will divide the placement decisions into 5 groups each group consist of 20 clusters. ClustersPercentagePerDecisionGroup default value is None. NumberOfClustersPerDecisionGroup is the max number of clusters can be exist in a decision group. ClustersPercentagePerDecisionGroup and NumberOfClustersPerDecisionGroup cannot be used at the same time. If ClustersPercentagePerDecisionGroup is defined it will override the NumberOfClustersPerDecisionGroup. The DecisionStrategy's DecisionGroups field is used to identify a subset of the placement decision based on cluster label selector. Each DecisionGroup has its own label and labelSelector that will identify the placementDecision.
+1. DecisionStrategy divide the created placement decisions into groups. The DecisionStrategy's ClustersPerDecisionGroup field set the max number of clusters exist in a decision group as fixed number or percentage of the total number of selected clusters. As example; for a total 100 clusters selected, ClustersPercentagePerDecisionGroup equal to 20% will divide the placement decisions into 5 groups each group consist of 20 clusters. ClustersPerDecisionGroup default value is 100% meaning all selected clusters will be in a single group. The DecisionStrategy's DecisionGroups field is used to identify a subset of the placement decision based on cluster selector. Each DecisionGroup has its own group name and clusterSelector that will identify the placementDecision.
 
 ```go
 type PlacementSpec struct {
@@ -55,8 +55,8 @@ type PlacementSpec struct {
 
 // Subset of the created placementDecision with label.
 type DecisionGroup struct {
-	// Label to be added to the created placement Decisions
-	Label string  `json:"labels,omitempty"`
+	// group name to be added to the created placement Decisions labels
+	groupName string  `json:"GroupName,omitempty"`
 
   // LabelSelector to select clusters subset by label.
 	// +optional
@@ -69,17 +69,12 @@ type DecisionStrategy struct {
 	// +optional
 	DecisionGroups []DecisionGroup `json:"decisionGroups,omitempty"`
 
-	// ClusterPercentagePerDecisionGroup is a percentage of the total selected clusters that will divide the clusters to groups.
-	// ex; for a total 100 clusters selected, ClusterPercentagePerDecisionGroup equal to 20% will divide the placement decision to 5 groups each group should have 20 clusters.
-	// +kubebuilder:validation:Enum=None;5%;10%;15%;20%;25%;30%;50%;100%
-	// +kubebuilder:default:=None
+	// ClusterPerDecisionGroup is a fixed number or percentage of the total selected clusters that will divide the clusters to groups each group has the max number of clusters equal to or less than the ClusterPerDecisionGroup value.
+	// ex; for a total 100 clusters selected, ClusterPerDecisionGroup equal to 20% will divide the placement decision to 5 groups each group should have 20 clusters.
+	// +kubebuilder:validation:Enum=None;5%;10%;15%;20%;25%;30%;40%;50%;100%
+	// +kubebuilder:default:="100%"
 	// +optional
-	ClusterPercentagePerDecisionGroup string `json:"clusterPercentagePerDecisionGroup,omitempty"`
-
-	// NumberOfClustersPerDecisionGroup is the max number of clusters per decision group. If ClusterPercentagePerDecisionGroup is used the NumberOfClustersPerDecisionGroup will be ignored.
-	// +kubebuilder:default:=100
-	// +optional
-	NumberOfClustersPerDecisionGroup int32 `json:"numberOfClustersPerDecisionGroup,omitempty"`
+	ClusterPerDecisionGroup intOrString `json:"clustersPerDecisionGroup,omitempty"`
 }
 
 ```
@@ -92,13 +87,13 @@ type DecisionGroupStatus struct {
 	// +optional
 	DecisionGroupIndex int32 `json:"decisionGroupIndex"`
 
-	// Decision group label that is defined in the DecisionStrategy's DecisionGroup.
+	// Decision group name that is defined in the DecisionStrategy's DecisionGroup.
 	// +optional
-	DecisionGroupLabel string `json:"decisionGroupLabel"`
+	DecisionGroupName string `json:"decisionGroupName"`
 
 	// List of placement decisions names associated with the decision group
 	// +optional
-	PlacementDecisions []string `json:"placementDecisions"`
+	Decisions []string `json:"decisions"`
 
 	// Total number of clusters in the decision group. Clusters count is equal or less than the max number of clusters per decision group defined in the decision strategy.
 	// +kubebuilder:default:=0
@@ -121,25 +116,25 @@ type PlacementStatus struct {
 }
 ```
 #### PlacementDecision API labels 
-A Placement can be linked to multiple PlacementDecisions, Adding DecisionGroupIndexLabel to determine the selected placementDecisions belong to which decision group. DecisionGroupLabel value is the label defined in the DecisionStrategy's DecisionGroup. The DecisionGroupIndex increase incrementally based on the NumberOfClustersPerDecisionGroup/ClustersPercentagePerDecisionGroup and total number of selected clusters. If there is no DecisionStrategy defined all PlacementDecisions will have DecisionGroupIndex value 0.
+A Placement can be linked to multiple PlacementDecisions, Adding DecisionGroupIndexLabel to determine the selected placementDecisions belong to which decision group. decisionGroupName value is the group name defined in the DecisionStrategy's DecisionGroup. The DecisionGroupIndex increase incrementally based on the ClustersPerDecisionGroup and total number of selected clusters. If there is no DecisionStrategy defined all PlacementDecisions will have DecisionGroupIndex value 0.
 
 ```go
 const (
 	PlacementLabel string = "cluster.open-cluster-management.io/placement"
 	// decision group index.
-	DecisionGroupIndexLabel string = "cluster.open-cluster-management.io/decisiongroupindex"
-	// decision group label.
-	DecisionGroupLabel      string = "cluster.open-cluster-management.io/decisiongrouplabel"
+	DecisionGroupIndexLabel string = "cluster.open-cluster-management.io/decision-group-index"
+	// decision group name.
+	DecisionGroupNameLabel  string = "cluster.open-cluster-management.io/decision-group-name"
 )
 ```
 
 ## Design and Implementation Details
 
-The placement controller will determine the decision groups based on 1) The number of total selected clusters. 2) The NumberOfClustersPerDecisionGroup or ClustersPercentagePerDecisionGroup. 3) The DecisionGroup defined in the DecisionStrategy. The placement controller will label the created placementDecisions with DecisionGroupIndex to relate the placementDecision with the decision groups. The placementDecisions will have DecisionGroupLabel that is defined in the DecisionStrategy's DecisionGroup.
+The placement controller will determine the decision groups based on 1) The number of total selected clusters. 2) The number or percentage defined in ClustersPerDecisionGroup. 3) The DecisionGroup defined in the DecisionStrategy. The placement controller will label the created placementDecisions with DecisionGroupIndex to relate the placementDecision with the decision groups. The placementDecisions will have decisionGroupName label that is defined in the DecisionStrategy's DecisionGroup.
 
 ### Examples
 
-Example for a placement has DecisionStrategy defined with two decisionGroups and numberOfClustersPerDecisionGroup equal to 150.
+Example for a placement has DecisionStrategy defined with two decisionGroups and ClustersPerDecisionGroup equal to 150.
 
 ```yaml
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -157,14 +152,14 @@ spec:
               values:
                 - 'true'
   DecisionStrategy:
-    numberOfClustersPerDecisionGroup: 150
+    clustersPerDecisionGroup: 150
     DecisionGroups:
-    - label: prod-canary-west
+    - groupName: prod-canary-west
       clusterSelector:
         matchExpressions:
           - key: prod-canary-west
             operator: Exist
-    - label: prod-canary-east
+    - groupName: prod-canary-east
       clusterSelector:
         matchExpressions:
           - key: prod-canary-east
@@ -185,12 +180,12 @@ status:
   numberOfSelectedClusters: 320
   decisionGroups:
   - decisionGroupIndex: 0
-    decisionGroupLabel: prod-canary-west
+    decisionGroupName: prod-canary-west
     placementDecisions:
     - ztp-placement-decision-0
     clusterCount: 10
   - decisionGroupIndex: 1
-    decisionGroupLabel: prod-canary-east
+    decisionGroupName: prod-canary-east
     placementDecisions:
     - ztp-placement-decision-1
     clusterCount: 10
@@ -211,7 +206,7 @@ status:
       status: 'True'
       type: PlacementSatisfied
 ```  
-The created placementDecisions will have DecisionGroupIndex label and DecisionGroupLabel as below.
+The created placementDecisions will have DecisionGroupIndex label and decisionGroupName label as below.
 
 ```yaml
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -222,7 +217,7 @@ metadata:
   labels:
     cluster.open-cluster-management.io/placement: ztp-placement
     cluster.open-cluster-management.io/decisiongroupindex: 0
-    cluster.open-cluster-management.io/label: "prod-canary-wast"
+    cluster.open-cluster-management.io/decisiongroupname: "prod-canary-wast"
 status:
   decisions:
     - clusterName: cls001
@@ -237,7 +232,7 @@ metadata:
   labels:
     cluster.open-cluster-management.io/placement: ztp-placement
     cluster.open-cluster-management.io/decisiongroupindex: 1
-    cluster.open-cluster-management.io/label: "prod-canary-east"
+    cluster.open-cluster-management.io/decisiongroupname: "prod-canary-east"
 status:
   decisions:
     - clusterName: cls006
@@ -301,7 +296,113 @@ status:
     ...
 ```
 
-The Placement Helper [library](https://github.com/open-cluster-management-io/api/blob/main/cluster/v1beta1/helpers.go) should provide functions to facilitate retrieve the cluster groups.
+Another example for a placement doesn't have a decisionStrategy defined as below. All clusters will be set under decisionGroupIndex 0. 
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: ztp-placement
+  namespace: ztp-acm-ns
+spec:
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: common-profile
+              operator: In
+              values:
+                - 'true'
+status:
+  numberOfSelectedClusters: 320
+  decisionGroups:
+  - decisionGroupIndex: 0
+    placementDecisions:
+    - ztp-placement-decision-0
+    - ztp-placement-decision-1
+    - ztp-placement-decision-2
+    - ztp-placement-decision-3
+    clusterCount: 320
+```
+Another example for a placement having a decisionStrategy define a single decision group as below. Two decision groups will be created; 1- first one have the clusters selected by prod-canary selection. 2- Second group have the rest of clusters selected by the placement predicates decision (common-profile = true). 
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: ztp-placement
+  namespace: ztp-acm-ns
+spec:
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: common-profile
+              operator: In
+              values:
+                - 'true'
+  DecisionStrategy:
+    clustersPerDecisionGroup: 100%
+    DecisionGroups:
+    - groupName: prod-canary
+      clusterSelector:
+        matchExpressions:
+          - key: prod-canary
+            operator: Exist
+
+status:
+  numberOfSelectedClusters: 320
+  decisionGroups:
+  - decisionGroupIndex: 0
+    placementDecisions:
+    - ztp-placement-decision-0
+    clusterCount: 20
+  - decisionGroupIndex: 1
+    placementDecisions:
+    - ztp-placement-decision-1
+    - ztp-placement-decision-2
+    - ztp-placement-decision-3
+    clusterCount: 300
+```
+Another example for a placement having decisionStrategy defined with clustersPerDecisionGroup=150 as below. With a selection out of 320 clusters there are 3 decisionGroup are created.
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: ztp-placement
+  namespace: ztp-acm-ns
+spec:
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: common-profile
+              operator: In
+              values:
+                - 'true'
+  DecisionStrategy:
+    clustersPerDecisionGroup: 150
+status:
+  numberOfSelectedClusters: 320
+  decisionGroups:
+  - decisionGroupIndex: 0
+    placementDecisions:
+    - ztp-placement-decision-0
+    - ztp-placement-decision-1
+    clusterCount: 150
+  - decisionGroupIndex: 1
+    placementDecisions:
+    - ztp-placement-decision-2
+    - ztp-placement-decision-3
+    clusterCount: 150
+  - decisionGroupIndex: 2
+    placementDecisions:
+    - ztp-placement-decision-4
+    clusterCount: 20
+```
+
+The Placement Helper [library](https://github.com/open-cluster-management-io/api/blob/main/cluster/v1beta1/helpers.go) should provide functions to facilitate retrieve the decision groups.
 
 #### Special case handling
 
@@ -311,25 +412,43 @@ The Placement Helper [library](https://github.com/open-cluster-management-io/api
 ### How Workload applier APIs will benefits from using placementStrategy
 
 The OCM APIs such as ManifestWorkReplicaSet or Policy can define how-to roll out the workloads considering the Decision Groups defined in the placement.
-For example; assuming the below placementStrategy struct is part of the manifestWorkReplicaSet APIs. It defines the workload rollout type (All or Progressive) and decision groups to apply the workload first.
+For example; assuming the below RolloutStrategy struct is part of the manifestWorkReplicaSet APIs. It defines the workload rollout type (All, Progressive and ProgressivePerGroup), the decision groups to apply the workload first, timeout for waiting the workload to reach successful state and maxConcurrency of the clusters to apply the workload (if placement->DecisionStrategy->clustersPerDecisionGroup not considered).
 
 ```go
-type PlacementStrategy struct {
-	// Rollout type either All or Progressive.
-	// +kubebuilder:validation:Enum=All;Progressive
+type RolloutStrategy struct {
+	// Rollout types are All, Progressive and ProgressivePerGroup
+	// 1) All: means apply the workload to all clusters in the decision groups at once.
+	// 2) Progressive: means apply the workload to the selected clusters progressively per cluster. The max concurrency of clusters to apply the workload will be equal to the clustersPerDecisionGroup defined in the placement->DecisionStrategy APIs.
+	// 3) ProgressivePerGroup: means apply the workload to decisionGroup clusters progressively per group. The workload will not be applied to the next decisionGroup unless the previous group reach the successful state or timeout.
+	// +kubebuilder:validation:Enum=All;Progressive;ProgressivePerGroup
 	// +kubebuilder:default:=All
 	// +optional
-	RolloutType string `json:"rolloutType"`
+	type string `json:"type"`
 
-	// List of the decision groups labels to apply the workload first.
+	// List of the decision groups names or indexes to apply the workload first and fail (not proceed to apply workload to other decision groups) if workload did not reach successful state or time out.
 	// +optional
-	DecisionGroupsToApplyFirst []string `json:"decisionGroupsToApplyFirst"`
+	MandatoryDecisionGroups []intOrString `json:"mandatoryDecisionGroups"`
+
+	// Timeout defined in minutes for how long workload applier controller will wait till reach successful state. Only considered for Rollout Type Progressive and ProgressivePerGroup. Default is None meaning the workload apply will not proceed if did not reach the successful state. 
+	// +kubebuilder:default:=None
+	// +optional
+	Timeout string `json:"timeout"`
+	
+	// MaxConcurrency is the max number of clusters to deploy workload concurrently. The default value for MaxConcurrency is determined from the clustersPerDecisionGroup defined in the placement->DecisionStrategy.
+	// +optional
+	MaxConcurrency intOrString `json:"maxConcurrency,omitempty"`
 }
 ```
-The Rollout types All mean apply the workload to all clusters in the decision groups at once while progressive type mean apply the workload to the decision group one by one.
-The DecisionGroupsToApplyFirst define the labels for the decision groups to apply the workload first. If DecisionGroupsToApplyFirst not defined the decision group index should be considered instead.
+The Rollout Strategy types;
+1) All: means apply the workload to all clusters in the decision groups at once.
+2) Progressive: means apply the workload to the selected clusters progressively per cluster. The max concurrency of clusters to apply the workload will be equal to the clustersPerDecisionGroup defined in the placement->DecisionStrategy APIs.
+3) ProgressivePerGroup: means apply the workload to decisionGroup clusters progressively per group. The workload will not be applied to the next decisionGroup unless the previous group reach the successful state or timeout.
 
-Let's consider the below ManifestWorkReplicaSet example has a placementRef to the above ztp-placement example AND the placement Strategy has rollout type progressive with list of the decision groups labels.
+The mandatoryDecisionGroups is a list of decision groups to apply the workload first. If mandatoryDecisionGroups not defined the decision group index is considered to apply the workload in groups by order.
+
+The Timeout defined in minutes for how long workload applier controller will wait till workload reach successful state in the spoke cluster.
+
+Let's consider the below ManifestWorkReplicaSet example has a placementRef to the above ztp-placement example AND the RolloutStrategy type is progressive with list of the decision groups names.
 
 ```yaml
 apiVersion: work.open-cluster-management.io/v1alpha1
@@ -340,9 +459,10 @@ metadata:
 spec:
   placementRefs:
     - name: ztp-placement
-      placementStartegy:
+      rolloutStrategy:
         rolloutType: Progressive
-        decisionGroupsToApplyFirst:
+        timeout: 50min
+        mandatoryDecisionGroups:
         - prod-canary-west
         - prod-canary-east
   manifestWorkTemplate:
@@ -354,12 +474,12 @@ The decision groups associated with ztp-placement as below
 ```yaml
   decisionGroups:
   - decisionGroupIndex: 0
-    decisionGroupLabel: prod-canary-west
+    decisionGroupName: prod-canary-west
     placementDecisions:
     - ztp-placement-decision-0
     clusterCount: 10
   - decisionGroupIndex: 1
-    decisionGroupLabel: prod-canary-east
+    decisionGroupName: prod-canary-east
     placementDecisions:
     - ztp-placement-decision-1
     clusterCount: 10
@@ -382,7 +502,7 @@ After all clusters in decision groups prod-canary-west & prod-canary-east have t
 
 * A cluster has been added to decision group index 0 while the applier controller applying workloads in decision group index 2. The applier controller should apply the workload on the added cluster in the decision group 0. The applier controller should decide either continue apply the workload progressively or wait till the added cluster to the decision group 0 has the workload in its desired successful state.
 
-* While applying the workloads on decision group index 2 the placement has been changed and all cluster groups changed. The applier controller should act accordingly and apply the workload to the added clusters in decision group index 0 then decision group index 1.
+* While applying the workloads on decision group index 2 the placement has been changed and all cluster groups changed. The applier controller should act accordingly and apply the workload to the added or removed clusters in decision group index 0 then decision group index 1.
 
 ### Risks and Mitigation
 
